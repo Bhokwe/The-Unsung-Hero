@@ -12,12 +12,16 @@
 - **Documentation (Gemini):** Assisting in refining the AI Ethics Statement.
 
 ## AI Interaction Log
-*(Note: Use this section to record how the AI helped or where it failed to score high on "Technical Execution".)*
+
 - **Entry 1:** Used Cursor to generate a Python script for the Knight's movement. 
 - **Observation:** The AI initially made the Knight too smart; I had to re-prompt it to make his pathfinding prioritize the "highest enemy density" to reflect his reckless nature.
 - **Entry 2:** Generated the first iteration of the `RecklessKnight` class using Cursor. Implemented a `find_densest_enemy_cluster` function instead of standard pathfinding to ensure the  Knight actively seeks out the most dangerous areas.
 -**Entry 3:** Used AI to build the SupportPlayer class. Implemented a vector-based knockback system for the Pulse ability. Directed the AI to enforce the design constraint where using Pulse deducts 5% of the Knight's current HP, creating a functional risk/reward loop.
 -**Entry 4:** Used Cursor to implement the combat and healing loop. Added a LifeOrb class. Instructed the AI to ensure the Knight takes minor damage upon enemy collision, reinforcing his recklessness, and built the collection logic for the SupportPlayer to restore his HP.
+-**Entry 5:** Playtested the V3 core loop and noticed the Knight was too easily distracted, abandoning fights to chase new swarms. Prompted Cursor to implement a combat_focus_radius (130) and a find_closest_enemy check to create a "local combat lock." Also increased contact_damage from 2.0 to 3.0 to raise the stakes. This iteration successfully forces the Knight to commit to fights, increasing the mechanical pressure on the player to heal him.
+-**Entry 6:** Implemented an escalating endless-runner style difficulty system. Directed Cursor to create TankEnemy and RangedEnemy subclasses with distinct behaviors (Tanks are slow but hit hard; Ranged enemies fire tracking projectiles). Updated the spawner to increase frequency and enemy variety based on seconds_survived. Also updated the Player's Pulse ability to clear enemy projectiles, adding a defensive skill ceiling.
+-**Entry 7:** Directed Cursor to implement a Boss encounter at the 150-second mark to act as the final survival hurdle. To escalate the mid-game difficulty, I prompted the AI to add a 12-second decay timer to Life Orbs, but specifically tied its activation to the start of the Tank phase (45 seconds). This interconnected system drastically increases the mechanical pressure on the support player. Also used AI to patch a minor stability issue with projectile array iteration.
+-**Entry 8:** Prompted Cursor to build a UI overlay to communicate the new difficulty phases. Implemented timed on-screen text warnings for the Tank and Boss phases using Pygame's font module, along with a dedicated UI health bar for the Boss. Instructed the AI to optimize font rendering to maintain the 60 FPS target.
 
 ## Reflection Notes
 *(Keep notes here for your final 200-word reflections at the end of the jam.)*

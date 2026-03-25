@@ -15,13 +15,23 @@ BLACK = (0, 0, 0)
 KNIGHT_COLOR = (200, 50, 50)  
 PLAYER_COLOR = (50, 200, 250) 
 ENEMY_COLOR = (50, 200, 50)   
-PULSE_COLOR = (50, 200, 250, 100) # Transparent blue for pulse
+ORB_COLOR = (255, 215, 0) # Gold for Life Orbs
+
+class LifeOrb:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.radius = 6
+        self.heal_amount = 10.0
+
+    def draw(self, surface):
+        pygame.draw.circle(surface, ORB_COLOR, (int(self.x), int(self.y)), self.radius)
 
 class RecklessKnight:
     def __init__(self, x, y):
         self.x = x
         self.y = y
-        self.speed = 2.5 # Slightly slower than player
+        self.speed = 2.5 
         self.radius = 15
         self.state = "IDLE"
         self.max_hp = 100.0
@@ -40,10 +50,17 @@ class RecklessKnight:
                 best_target = enemy
         return best_target
 
-    def update(self, enemies):
-        target = self.find_densest_enemy_cluster(enemies)
+    def update(self, enemies, orbs):
+        # 1. Combat & Collision
+        for enemy in enemies[:]:
+            if math.dist((self.x, self.y), (enemy.x, enemy.y)) < self.radius + enemy.radius:
+                enemies.remove(enemy)
+                orbs.append(LifeOrb(enemy.x, enemy.y)) # Drop orb on kill
+                self.hp -= 2.0 # Knight takes minor damage for being reckless
 
-        if target:
+        # 2. Movement
+        target = self.find_densest_enemy_cluster(enemies)
+        if target and self.hp > 0:
             self.state = "CHARGING"
             dx, dy = target.x - self.x, target.y - self.y
             dist = math.hypot(dx, dy)
@@ -54,16 +71,17 @@ class RecklessKnight:
             self.state = "IDLE"
 
     def draw(self, surface):
-        pygame.draw.circle(surface, KNIGHT_COLOR, (int(self.x), int(self.y)), self.radius)
-        # Health bar for the Knight
+        if self.hp > 0:
+            pygame.draw.circle(surface, KNIGHT_COLOR, (int(self.x), int(self.y)), self.radius)
+        # Health bar
         pygame.draw.rect(surface, (100, 0, 0), (self.x - 20, self.y - 25, 40, 5))
-        pygame.draw.rect(surface, (0, 255, 0), (self.x - 20, self.y - 25, 40 * (self.hp / self.max_hp), 5))
+        pygame.draw.rect(surface, (0, 255, 0), (self.x - 20, self.y - 25, 40 * max(0, self.hp) / self.max_hp, 5))
 
 class SupportPlayer:
     def __init__(self, x, y):
         self.x = x
         self.y = y
-        self.speed = 6 # Player is fast to dash around
+        self.speed = 6 
         self.radius = 10
         self.pulse_radius = 150
         self.pulse_cooldown = 0
@@ -74,35 +92,37 @@ class SupportPlayer:
         if keys[pygame.K_a] or keys[pygame.K_LEFT]: self.x -= self.speed
         if keys[pygame.K_d] or keys[pygame.K_RIGHT]: self.x += self.speed
 
-        # Keep player on screen
         self.x = max(self.radius, min(WIDTH - self.radius, self.x))
         self.y = max(self.radius, min(HEIGHT - self.radius, self.y))
 
     def trigger_pulse(self, enemies, knight):
-        if self.pulse_cooldown == 0:
-            # Risk/Reward: Costs 5% of Knight's CURRENT health
+        if self.pulse_cooldown == 0 and knight.hp > 0:
             health_cost = knight.hp * 0.05
             knight.hp -= health_cost
             
-            # Knockback physics
             for enemy in enemies:
                 dist = math.dist((self.x, self.y), (enemy.x, enemy.y))
                 if dist < self.pulse_radius:
-                    # Calculate push direction
                     dx, dy = enemy.x - self.x, enemy.y - self.y
                     if dist > 0:
-                        enemy.x += (dx / dist) * 80 # Knockback force
+                        enemy.x += (dx / dist) * 80 
                         enemy.y += (dy / dist) * 80
             
-            self.pulse_cooldown = 60 # 1 second cooldown at 60 FPS
+            self.pulse_cooldown = 60 
 
-    def update(self):
+    def update(self, orbs, knight):
+        # Cooldown management
         if self.pulse_cooldown > 0:
             self.pulse_cooldown -= 1
 
+        # Orb Collection
+        for orb in orbs[:]:
+            if math.dist((self.x, self.y), (orb.x, orb.y)) < self.radius + orb.radius:
+                orbs.remove(orb)
+                knight.hp = min(knight.max_hp, knight.hp + orb.heal_amount) # Heal but don't exceed max HP
+
     def draw(self, surface):
         pygame.draw.circle(surface, PLAYER_COLOR, (int(self.x), int(self.y)), self.radius)
-        # Draw pulse range indicator when ready
         if self.pulse_cooldown == 0:
             pygame.draw.circle(surface, WHITE, (int(self.x), int(self.y)), self.pulse_radius, 1)
 
@@ -117,13 +137,15 @@ class DummyEnemy:
 
 def main():
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("The Unsung Hero - V2")
+    pygame.display.set_caption("The Unsung Hero - Core Loop")
     clock = pygame.time.Clock()
 
     knight = RecklessKnight(WIDTH // 2, HEIGHT // 2)
     player = SupportPlayer(WIDTH // 2 - 50, HEIGHT // 2)
     
-    enemies = [DummyEnemy(random.randint(50, 750), random.randint(50, 550)) for _ in range(20)]
+    enemies = []
+    orbs = []
+    spawn_timer = 0
 
     running = True
     while running:
@@ -135,13 +157,20 @@ def main():
                 if event.key == pygame.K_SPACE:
                     player.trigger_pulse(enemies, knight)
 
+        # Basic Enemy Spawner to keep the Knight busy
+        spawn_timer += 1
+        if spawn_timer > 30: # Spawn an enemy every half second
+            enemies.append(DummyEnemy(random.randint(50, 750), random.randint(50, 550)))
+            spawn_timer = 0
+
         # Update
         player.handle_input(keys)
-        player.update()
-        knight.update(enemies)
+        player.update(orbs, knight)
+        knight.update(enemies, orbs)
 
         # Draw
         screen.fill(BLACK)
+        for orb in orbs: orb.draw(screen)
         for enemy in enemies: enemy.draw(screen)
         knight.draw(screen)
         player.draw(screen)

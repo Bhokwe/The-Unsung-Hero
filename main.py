@@ -232,6 +232,7 @@ class RecklessKnight:
         self.base_color = KNIGHT_COLOR
         self.color = KNIGHT_COLOR
         self.hit_flash_until_ticks = 0
+        self.last_hit_sfx_ticks = 0
         self.splash_damage_end_ticks = 0
         self.splash_ring_until_ticks = 0
         self.sprite = load_sprite("knight.png", self.radius)
@@ -251,7 +252,19 @@ class RecklessKnight:
                 best_target = enemy
         return best_target
 
-    def update(self, enemies, orbs, projectiles, speed_mult=1.0, contact_damage_mult=1.0, knight_phase_speed_mult=1.0, on_kill=None, now_ticks=0, orb_drop_chance=1.0):
+    def update(
+        self,
+        enemies,
+        orbs,
+        projectiles,
+        speed_mult=1.0,
+        contact_damage_mult=1.0,
+        knight_phase_speed_mult=1.0,
+        on_kill=None,
+        now_ticks=0,
+        orb_drop_chance=1.0,
+        on_contact_damage_sfx=None,
+    ):
         self.speed = self.base_speed * float(knight_phase_speed_mult) * float(speed_mult)
         for proj in projectiles[:]:
             if math.dist((self.x, self.y), (proj.x, proj.y)) < self.radius + proj.radius:
@@ -292,6 +305,10 @@ class RecklessKnight:
                 can_deal_damage = not (isinstance(enemy, BossEnemy) and now_ticks < enemy.stunned_until_ticks)
                 if can_deal_damage:
                     self.hp -= enemy.damage * float(contact_damage_mult)
+                    # Contact-damage SFX: throttle so it doesn't spam while touching enemies.
+                    if on_contact_damage_sfx and (now_ticks - self.last_hit_sfx_ticks) > 120:
+                        on_contact_damage_sfx()
+                        self.last_hit_sfx_ticks = now_ticks
                 enemy.hp -= contact_deal_damage
                 # Contact-damage VFX: flash the Knight and the struck enemy.
                 self.hit_flash_until_ticks = max(self.hit_flash_until_ticks, now_ticks + 90)
@@ -392,12 +409,14 @@ class SupportPlayer:
             if on_pulse_sfx:
                 on_pulse_sfx()
 
-    def update(self, orbs, knight):
+    def update(self, orbs, knight, on_orb_collected=None):
         if self.pulse_cooldown > 0: self.pulse_cooldown -= 1
         for orb in orbs[:]:
             if math.dist((self.x, self.y), (orb.x, orb.y)) < self.radius + orb.radius:
                 orbs.remove(orb)
                 knight.hp = min(knight.max_hp, knight.hp + orb.heal_amount)
+                if on_orb_collected:
+                    on_orb_collected()
 
     def draw(self, surface, ox=0, oy=0):
         draw_entity(surface, self.x + ox, self.y + oy, self.radius, self.color, self.sprite)
@@ -443,13 +462,22 @@ def main():
         except (pygame.error, FileNotFoundError):
             return None
 
+    def safe_sound_fallback(mp3_filename, wav_filename, volume=1.0):
+        # Try MP3 first (your newer assets), then WAV as fallback.
+        snd = safe_sound(mp3_filename, volume)
+        if snd is None:
+            snd = safe_sound(wav_filename, volume)
+        return snd
+
     sfx = {
         "sword": safe_sound("sword.mp3", 0.55),
         "arrow": safe_sound("arrow.mp3", 0.45),
-        "death": safe_sound("death.mp3", 0.65),
+        "death": safe_sound_fallback("death.mp3", "death.wav", 0.65),
         "pulse": safe_sound("pulse.mp3", 0.6),
         "rage": safe_sound("rage.mp3", 0.65),
         "stun": safe_sound("stun.mp3", 0.65),
+        "orb": safe_sound_fallback("orb.mp3", "orb.wav", 0.3),
+        "hit": safe_sound_fallback("hit.mp3", "hit.wav", 0.3),
     }
     # Master SFX volume (30%).
     for snd in sfx.values():
@@ -654,7 +682,7 @@ def main():
 
             # Update Entities
             run["player"].handle_input(keys)
-            run["player"].update(run["orbs"], run["knight"])
+            run["player"].update(run["orbs"], run["knight"], on_orb_collected=lambda: play_sfx("orb"))
 
             for pickup in run["rage_pickups"][:]:
                 if math.dist((run["player"].x, run["player"].y), (pickup.x, pickup.y)) < run["player"].radius + pickup.radius:
@@ -726,6 +754,7 @@ def main():
                 on_kill=on_kill,
                 now_ticks=now_ticks,
                 orb_drop_chance=0.5 if boss_alive else 1.0,
+                on_contact_damage_sfx=lambda: play_sfx("hit"),
             )
 
             # Sword SFX on contact damage (throttled to avoid audio spam).
@@ -733,11 +762,12 @@ def main():
                 play_sfx("sword")
                 run["last_sword_sfx_ticks"] = now_ticks
 
-            if run["knight"].hp <= 0:
+            # Death Sound Fix: play exactly once at the moment we transition.
+            if run["knight"].hp <= 0 and game_state != "GAME_OVER":
                 game_state = "GAME_OVER"
                 if not run["death_sfx_played"]:
-                    play_sfx("death")
                     run["death_sfx_played"] = True
+                    play_sfx("death")
 
         current_boss = next((enemy for enemy in run["enemies"] if isinstance(enemy, BossEnemy) and enemy.hp > 0), None)
         score_int = int(run["score"])
@@ -821,20 +851,23 @@ def main():
             screen.blit(p2, p2.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 45)))
 
         elif game_state == "RULES":
+            title = sub_font.render("THE UNSUNG HERO - FIELD MANUAL", True, WHITE)
+            screen.blit(title, title.get_rect(center=(WIDTH // 2, 125)))
+
             rules_lines = [
-                "RULES",
-                "WASD / Arrow Keys: Move the Player",
-                "SPACE: Pulse (push enemies + clear projectiles)",
-                "Goal: Keep the Knight alive as long as possible",
-                "Collect red diamonds for Rage Mode",
-                "Collect blue diamonds in Boss phase to stun the Boss",
-                "Press M to return to Menu",
+                "WASD / Arrows: Move the Support Wisp",
+                "SPACE: Pulse (Pushes enemies & clears projectiles. Costs 5% Knight HP!)",
+                "Keep the Arrogant Knight alive! He fights on his own.",
+                "Collect Golden Orbs to heal the Knight.",
+                "Red Diamonds trigger Rage Mode. Blue Diamonds stun the Boss.",
+                "Press M to Return to Menu",
             ]
+            start_y = 200
+            line_gap = 42
             for idx, line in enumerate(rules_lines):
-                font = menu_font if idx == 0 else ui_font
-                color = WHITE if idx == 0 else (230, 230, 240)
-                txt = font.render(line, True, color)
-                screen.blit(txt, txt.get_rect(center=(WIDTH // 2, 120 + idx * 52)))
+                txt = ui_font.render(line, True, (230, 230, 240))
+                y = start_y + idx * line_gap
+                screen.blit(txt, txt.get_rect(center=(WIDTH // 2, y)))
 
         elif game_state == "PAUSED":
             dim = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
